@@ -1,4 +1,3 @@
-import path from "path";
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -6,7 +5,7 @@ import { GameRoom } from "./game.js";
 import { TICK_RATE, SNAPSHOT_RATE, InputMsg, JoinReply, SetTargetMsg } from "../shared/protocol.js";
 
 const app = express();
-app.use(express.static(path.join(__dirname, "../public")));
+app.use(express.static("src/public"));
 
 const httpServer = createServer(app);
 const io = new Server(httpServer);

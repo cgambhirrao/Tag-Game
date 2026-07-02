@@ -92,7 +92,7 @@ export class GameRoom {
   removePlayer(id: string): void {
     this.players.delete(id);
     if (this.hostId === id && this.players.size > 0) {
-      this._hostId = this.players.keys().next().value;
+      this._hostId = this.players.keys().next().value!;
     }
     if (this.phase === "playing") this.checkWin();
   }
