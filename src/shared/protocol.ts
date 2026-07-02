@@ -13,8 +13,9 @@ export const MAX_SHIELDS = 3;
 export const SHIELD_PICKUP_RANGE = 36;
 
 export const SPRINT_SPEED_MULT = 2;
-export const SPRINT_DURATION_TICKS = TICK_RATE * 2;
-export const SPRINT_COOLDOWN_TICKS = TICK_RATE * 5;
+export const STAMINA_MAX = 100;
+export const STAMINA_DRAIN_PER_TICK = 3;
+export const STAMINA_REGEN_PER_TICK = 1;
 
 export const INVISIBLE_DURATION_TICKS = TICK_RATE * 3;
 export const INVISIBLE_COOLDOWN_TICKS = TICK_RATE * 8;
@@ -69,6 +70,7 @@ export interface PlayerSnapshot {
   sprintActive: boolean;
   invisibleActive: boolean;
   shieldTimer: number;
+  stamina: number;
 }
 
 export interface InputMsg {

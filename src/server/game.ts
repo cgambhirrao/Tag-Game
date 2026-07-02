@@ -3,7 +3,7 @@ import {
   PLAYER_SPEED, WORLD, TICK_RATE, MAX_PLAYERS,
   TAG_RANGE, IT_ELIMINATE_TIME, GRACE_TICKS,
   SHIELD_DURATION, SHIELD_RESPAWN_TICKS, MAX_SHIELDS, SHIELD_PICKUP_RANGE,
-  SPRINT_SPEED_MULT, SPRINT_DURATION_TICKS, SPRINT_COOLDOWN_TICKS,
+  SPRINT_SPEED_MULT, STAMINA_MAX, STAMINA_DRAIN_PER_TICK, STAMINA_REGEN_PER_TICK,
   INVISIBLE_DURATION_TICKS, INVISIBLE_COOLDOWN_TICKS,
   SHRINK_STEP, MIN_WORLD_SIZE,
 } from "../shared/protocol.js";
@@ -17,8 +17,8 @@ interface ServerPlayer {
   eliminated: boolean;
   graceTicks: number;
   itElapsed: number;
-  sprintTicks: number;
-  sprintCooldown: number;
+  stamina: number;
+  sprinting: boolean;
   invisibleTicks: number;
   invisibleCooldown: number;
   shieldTimer: number;
@@ -92,7 +92,7 @@ export class GameRoom {
       pos: { ...spawn },
       lastDir: { x: 0, y: 0 }, lastSeq: 0,
       eliminated: false, graceTicks: 0, itElapsed: 0,
-      sprintTicks: 0, sprintCooldown: 0,
+      stamina: STAMINA_MAX, sprinting: false,
       invisibleTicks: 0, invisibleCooldown: 0,
       shieldTimer: 0,
     };
@@ -127,7 +127,7 @@ export class GameRoom {
     for (let i = 0; i < ids.length; i++) {
       const p = this.players.get(ids[i])!;
       p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
-      p.sprintTicks = 0; p.sprintCooldown = 0;
+      p.stamina = STAMINA_MAX; p.sprinting = false;
       p.invisibleTicks = 0; p.invisibleCooldown = 0;
       p.shieldTimer = 0;
       const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
@@ -166,7 +166,7 @@ export class GameRoom {
     for (let i = 0; i < ids.length; i++) {
       const p = this.players.get(ids[i])!;
       p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
-      p.sprintTicks = 0; p.sprintCooldown = 0;
+      p.stamina = STAMINA_MAX; p.sprinting = false;
       p.invisibleTicks = 0; p.invisibleCooldown = 0;
       p.shieldTimer = 0;
       const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
@@ -188,10 +188,7 @@ export class GameRoom {
     p.lastDir = { x, y };
     p.lastSeq = seq;
 
-    if (sprint && p.sprintCooldown <= 0 && p.sprintTicks <= 0) {
-      p.sprintTicks = SPRINT_DURATION_TICKS;
-      p.sprintCooldown = SPRINT_COOLDOWN_TICKS;
-    }
+    p.sprinting = sprint && p.stamina > 0;
     if (invisible && p.invisibleCooldown <= 0 && p.invisibleTicks <= 0) {
       p.invisibleTicks = INVISIBLE_DURATION_TICKS;
       p.invisibleCooldown = INVISIBLE_COOLDOWN_TICKS;
@@ -207,8 +204,12 @@ export class GameRoom {
     if (!it || it.eliminated) { this.pickNextIt(); return; }
 
     for (const p of this.players.values()) {
-      if (p.sprintCooldown > 0) p.sprintCooldown--;
-      if (p.sprintTicks > 0) p.sprintTicks--;
+      if (p.sprinting && p.stamina > 0) {
+        p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN_PER_TICK);
+        if (p.stamina <= 0) p.sprinting = false;
+      } else {
+        p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN_PER_TICK);
+      }
       if (p.invisibleCooldown > 0) p.invisibleCooldown--;
       if (p.invisibleTicks > 0) p.invisibleTicks--;
       if (p.shieldTimer > 0) p.shieldTimer--;
@@ -231,7 +232,7 @@ export class GameRoom {
     const bounds = { minX: this.worldMinX, minY: this.worldMinY, maxX: this.worldMaxX, maxY: this.worldMaxY };
     for (const p of this.players.values()) {
       if (p.eliminated) continue;
-      const speed = (p.sprintTicks > 0 ? PLAYER_SPEED * SPRINT_SPEED_MULT : PLAYER_SPEED);
+      const speed = (p.sprinting && p.stamina > 0 ? PLAYER_SPEED * SPRINT_SPEED_MULT : PLAYER_SPEED);
       p.pos.x += p.lastDir.x * speed * dt;
       p.pos.y += p.lastDir.y * speed * dt;
       p.pos.x = Math.max(bounds.minX, Math.min(bounds.maxX, p.pos.x));
@@ -333,7 +334,8 @@ export class GameRoom {
       players.push({
         id: p.id, name: p.name, pos: { ...p.pos },
         eliminated: p.eliminated, graceTicks: p.graceTicks,
-        sprintActive: p.sprintTicks > 0,
+        sprintActive: p.sprinting && p.stamina > 0,
+        stamina: Math.ceil(p.stamina),
         invisibleActive: p.invisibleTicks > 0,
         shieldTimer: p.shieldTimer > 0 ? Math.ceil(p.shieldTimer / TICK_RATE) : 0,
       });

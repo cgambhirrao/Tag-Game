@@ -112,7 +112,13 @@ function connectSocket() {
         if (me.sprintActive) parts.push("⚡ SPRINT");
         if (me.invisibleActive) parts.push("👻 INVISIBLE");
         if (me.shieldTimer > 0) parts.push("🛡️ " + me.shieldTimer + "s");
-        abilityHud.textContent = parts.join("  |  ");
+        if (me.stamina !== undefined) {
+          const pct = Math.max(0, Math.min(100, me.stamina));
+          const color = pct > 50 ? "#5ce87b" : pct > 25 ? "#f0c040" : "#e85c5c";
+          const bar = `<span style="color:${color}">${"█".repeat(Math.floor(pct / 10))}${"░".repeat(10 - Math.ceil(pct / 10))}</span>`;
+          parts.push(`STM ${bar}`);
+        }
+        abilityHud.innerHTML = parts.join("  |  ");
       }
     }
 
