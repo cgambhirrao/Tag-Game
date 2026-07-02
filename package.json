@@ -1,0 +1,16 @@
+{
+  "name": "coop-survival-tycoon",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "start": "tsx src/server/index.ts"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "socket.io": "^4.7.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
