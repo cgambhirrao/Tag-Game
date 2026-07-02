@@ -134,6 +134,30 @@ export class GameRoom {
     this.tickCount = 0;
   }
 
+  restartGame(): void {
+    if (this.players.size < 2) return;
+    this._phase = "playing";
+    this.tickCount = 0;
+    this.winnerId = "";
+    this.winnerName = "";
+    this.lastTaggedPlayerId = "";
+    this.tagTick = 0;
+
+    const ids = [...this.players.keys()];
+    for (let i = 0; i < ids.length; i++) {
+      const p = this.players.get(ids[i])!;
+      p.eliminated = false;
+      p.graceTicks = 0;
+      p.itElapsed = 0;
+      const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
+      p.pos = { ...spawn };
+    }
+
+    this.itPlayerId = ids[Math.floor(Math.random() * ids.length)];
+    const it = this.players.get(this.itPlayerId)!;
+    it.graceTicks = GRACE_TICKS;
+  }
+
   setInput(id: string, seq: number, dir: Vec2): void {
     const p = this.players.get(id);
     if (!p || seq <= p.lastSeq) return;

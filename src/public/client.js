@@ -23,6 +23,7 @@ const incBtn = document.getElementById("inc-btn");
 const startBtn = document.getElementById("start-btn");
 const winnerEl = document.getElementById("winner");
 const winnerNameEl = document.getElementById("winner-name");
+const playAgainBtn = document.getElementById("play-again-btn");
 const itLabel = document.getElementById("it-label");
 const itBarOuter = document.getElementById("it-bar-outer");
 const itBarInner = document.getElementById("it-bar-inner");
@@ -36,7 +37,10 @@ let seq = 0;
 let keys = new Set();
 let currentState = null;
 
-addEventListener("keydown", (e) => keys.add(e.code));
+addEventListener("keydown", (e) => {
+  keys.add(e.code);
+  if (e.code.startsWith("Arrow")) e.preventDefault();
+});
 addEventListener("keyup", (e) => keys.delete(e.code));
 
 socket.on("connect", () => {
@@ -67,6 +71,10 @@ incBtn.addEventListener("click", () => {
 
 startBtn.addEventListener("click", () => {
   socket.emit("start");
+});
+
+playAgainBtn.addEventListener("click", () => {
+  socket.emit("restart");
 });
 
 socket.on("state", (state) => {
@@ -137,10 +145,10 @@ socket.on("state", (state) => {
 setInterval(() => {
   if (!selfId || !currentState || currentState.phase !== "playing") return;
   const dir = { x: 0, y: 0 };
-  if (keys.has("KeyW")) dir.y -= 1;
-  if (keys.has("KeyS")) dir.y += 1;
-  if (keys.has("KeyA")) dir.x -= 1;
-  if (keys.has("KeyD")) dir.x += 1;
+  if (keys.has("KeyW") || keys.has("ArrowUp")) dir.y -= 1;
+  if (keys.has("KeyS") || keys.has("ArrowDown")) dir.y += 1;
+  if (keys.has("KeyA") || keys.has("ArrowLeft")) dir.x -= 1;
+  if (keys.has("KeyD") || keys.has("ArrowRight")) dir.x += 1;
   const len = Math.hypot(dir.x, dir.y);
   if (len > 0) { dir.x /= len; dir.y /= len; }
   socket.emit("input", { seq: ++seq, dir });

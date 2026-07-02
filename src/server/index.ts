@@ -38,6 +38,11 @@ io.on("connection", (socket) => {
     room.startGame();
   });
 
+  socket.on("restart", () => {
+    if (!joined) return;
+    room.restartGame();
+  });
+
   socket.on("setTarget", (msg: SetTargetMsg) => {
     if (!joined) return;
     room.setTarget(socket.id, msg.targetCount);
