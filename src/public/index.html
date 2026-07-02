@@ -7,63 +7,90 @@
     body { margin: 0; background: #1a1d24; color: #eee; font-family: monospace; overflow: hidden; }
     canvas { display: block; }
     #hud { position: fixed; top: 8px; left: 8px; pointer-events: none; z-index: 10; }
-    #lobby {
+    .overlay {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.7); z-index: 20;
     }
-    #lobby.hidden { display: none; }
-    #lobby-box {
+    .overlay.hidden { display: none; }
+    .box {
       background: #232731; padding: 32px; border-radius: 12px; text-align: center;
-      min-width: 320px; border: 1px solid #3a3f4b;
+      min-width: 340px; border: 1px solid #3a3f4b;
     }
-    #lobby-box h1 { margin: 0 0 8px; font-size: 24px; }
-    #lobby-box p { margin: 4px 0; color: #aaa; }
-    #lobby-box .count-btn { background: #3a3f4b; color: #eee; border: none; padding: 4px 12px; cursor: pointer; font-size: 16px; border-radius: 4px; margin: 0 4px; }
-    #lobby-box .count-btn:hover { background: #4a4f5b; }
-    #lobby-box .count { font-size: 20px; margin: 0 8px; }
+    .box h1 { margin: 0 0 8px; font-size: 24px; }
+    .box p { margin: 4px 0; color: #aaa; }
+    .box input {
+      background: #2a2e38; color: #eee; border: 1px solid #3a3f4b;
+      padding: 8px 12px; border-radius: 4px; font-size: 16px; width: 200px;
+      text-align: center; outline: none;
+    }
+    .box input:focus { border-color: #5ce87b; }
+    .btn {
+      background: #3a3f4b; color: #eee; border: none; padding: 8px 20px;
+      border-radius: 4px; font-size: 14px; cursor: pointer; margin: 4px;
+    }
+    .btn:hover { background: #4a4f5b; }
+    .btn-primary { background: #5ce87b; color: #111; font-weight: bold; }
+    .btn-primary:hover { background: #4ad06a; }
+    .btn-danger { background: #e85c5c; color: #111; font-weight: bold; }
+    .btn-danger:hover { background: #d04a4a; }
     #player-list { list-style: none; padding: 0; margin: 12px 0; }
     #player-list li { padding: 4px 8px; background: #2a2e38; margin: 4px 0; border-radius: 4px; }
-    #winner {
-      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      background: rgba(0,0,0,0.8); z-index: 30;
-    }
-    #winner.hidden { display: none; }
-    #winner-box {
-      background: #232731; padding: 40px; border-radius: 12px; text-align: center;
-      border: 2px solid #f0c040;
-    }
-    #winner-box h1 { margin: 0; font-size: 32px; color: #f0c040; }
-    #winner-box p { margin: 8px 0 0; font-size: 18px; }
+    #winner-box { border: 2px solid #f0c040; }
+    #winner-box h1 { color: #f0c040; }
     #it-bar-outer {
       position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
       width: 200px; height: 14px; background: #2a2e38; border-radius: 7px; overflow: hidden; z-index: 10;
     }
     #it-bar-outer.hidden { display: none; }
     #it-bar-inner {
-      height: 100%; width: 0%; background: #5ce87b; border-radius: 7px; transition: width 0.05s linear;
+      height: 100%; width: 0%; border-radius: 7px; transition: width 0.05s linear;
     }
     #it-label {
       position: fixed; bottom: 38px; left: 50%; transform: translateX(-50%);
       color: #eee; font-size: 14px; z-index: 10; text-align: center;
     }
-    #it-label.hidden { display: none; }
+    #it-label.hidden, #ability-hud.hidden { display: none; }
+    #ability-hud {
+      position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+      color: #aaa; font-size: 12px; z-index: 10; text-align: center;
+    }
+    .code-display {
+      font-size: 36px; letter-spacing: 8px; color: #5ce87b; margin: 8px 0; font-weight: bold;
+    }
   </style>
 </head>
 <body>
   <div id="hud">connecting...</div>
   <canvas id="game"></canvas>
 
-  <div id="lobby">
-    <div id="lobby-box">
+  <!-- Room select -->
+  <div id="room-screen" class="overlay">
+    <div class="box">
       <h1>🏷️ Tag Game</h1>
+      <p style="margin-bottom:16px;">Create or join a room to play</p>
+      <button class="btn btn-primary" id="create-room-btn" style="padding:12px 32px;font-size:16px;">Create Room</button>
+      <br><br>
+      <p>or join with code:</p>
+      <input id="room-code-input" type="text" maxlength="4" placeholder="0000">
+      <br><br>
+      <button class="btn btn-primary" id="join-room-btn" style="padding:10px 24px;">Join</button>
+      <p id="room-error" style="color:#e85c5c;margin-top:8px;"></p>
+    </div>
+  </div>
+
+  <!-- Lobby -->
+  <div id="lobby" class="overlay hidden">
+    <div class="box">
+      <h1>🏷️ Tag Game</h1>
+      <p>Room: <span id="room-code" class="code-display" style="font-size:24px;letter-spacing:4px;"></span></p>
       <p id="lobby-status">Waiting for players...</p>
       <div id="host-controls" class="hidden">
         <p>Players:</p>
-        <button class="count-btn" id="dec-btn">−</button>
-        <span class="count" id="target-count">4</span>
-        <button class="count-btn" id="inc-btn">+</button>
+        <button class="btn" id="dec-btn">−</button>
+        <span class="count" id="target-count" style="font-size:20px;margin:0 8px;">4</span>
+        <button class="btn" id="inc-btn">+</button>
         <br><br>
-        <button id="start-btn" style="background:#5ce87b;color:#111;border:none;padding:8px 24px;border-radius:6px;font-size:16px;font-weight:bold;cursor:pointer;">Start Game</button>
+        <button id="start-btn" class="btn btn-primary" style="padding:10px 32px;font-size:16px;">Start Game</button>
       </div>
       <ul id="player-list"></ul>
       <p id="lobby-hint" style="color:#888;font-size:13px;">Waiting for more players...</p>
@@ -71,27 +98,32 @@
       <div style="font-size:13px;color:#aaa;text-align:left;line-height:1.6;">
         <b style="color:#eee;">How to play:</b><br>
         🏃 <b style="color:#e85c5c;">IT</b> (red) chases others — tag to swap IT<br>
-        ⏱️ Hold IT for <b>30s</b> → eliminated<br>
+        ⏱️ Hold IT for <b>2 min</b> → eliminated<br>
         🛡️ New IT gets <b>2s protection</b> (✦ protected)<br>
         🏆 Last player standing <b>wins</b><br>
-        ⌨️ <b>WASD</b> or <b>Arrow Keys</b> to move
+        ⌨️ <b>WASD</b> / <b>Arrow Keys</b> to move<br>
+        ⚡ <b>Shift</b> to sprint | <b>Space</b> to go invisible<br>
+        🛡️ Collect <b>shield</b> orbs for 20s immunity
       </div>
     </div>
   </div>
 
-  <div id="winner" class="hidden">
-    <div id="winner-box">
+  <!-- Winner -->
+  <div id="winner" class="overlay hidden">
+    <div class="box" id="winner-box">
       <h1>🏆 Winner!</h1>
-      <p id="winner-name"></p>
+      <p id="winner-name" style="font-size:20px;"></p>
       <br>
-      <button id="play-again-btn" style="background:#5ce87b;color:#111;border:none;padding:10px 32px;border-radius:6px;font-size:18px;font-weight:bold;cursor:pointer;">Play Again</button>
+      <button id="play-again-btn" class="btn btn-primary" style="padding:10px 32px;font-size:16px;">Play Again</button>
     </div>
   </div>
 
+  <!-- HUD -->
   <div id="it-label" class="hidden"></div>
   <div id="it-bar-outer" class="hidden">
     <div id="it-bar-inner"></div>
   </div>
+  <div id="ability-hud" class="hidden"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>

@@ -1,7 +1,11 @@
 import {
-  Vec2, PlayerSnapshot, GameState,
+  Vec2, PlayerSnapshot, GameState, ShieldPickup,
   PLAYER_SPEED, WORLD, TICK_RATE, MAX_PLAYERS,
   TAG_RANGE, IT_ELIMINATE_TIME, GRACE_TICKS,
+  SHIELD_DURATION, SHIELD_RESPAWN_TICKS, MAX_SHIELDS, SHIELD_PICKUP_RANGE,
+  SPRINT_SPEED_MULT, SPRINT_DURATION_TICKS, SPRINT_COOLDOWN_TICKS,
+  INVISIBLE_DURATION_TICKS, INVISIBLE_COOLDOWN_TICKS,
+  SHRINK_STEP, MIN_WORLD_SIZE,
 } from "../shared/protocol.js";
 
 interface ServerPlayer {
@@ -13,6 +17,11 @@ interface ServerPlayer {
   eliminated: boolean;
   graceTicks: number;
   itElapsed: number;
+  sprintTicks: number;
+  sprintCooldown: number;
+  invisibleTicks: number;
+  invisibleCooldown: number;
+  shieldTimer: number;
 }
 
 const SPAWN_POINTS: Vec2[] = [
@@ -23,23 +32,23 @@ const SPAWN_POINTS: Vec2[] = [
   { x: 400, y: 900 }, { x: 1200, y: 900 },
 ];
 
+function randomSpawn(worldBounds: { minX: number; minY: number; maxX: number; maxY: number }): Vec2 {
+  return {
+    x: worldBounds.minX + Math.random() * (worldBounds.maxX - worldBounds.minX),
+    y: worldBounds.minY + Math.random() * (worldBounds.maxY - worldBounds.minY),
+  };
+}
+
 export class GameRoom {
   private players = new Map<string, ServerPlayer>();
   private _hostId = "";
   private _targetCount = MAX_PLAYERS;
   private _phase: "lobby" | "playing" | "finished" = "lobby";
 
-  get phase(): string {
-    return this._phase;
-  }
-
-  get hostId(): string {
-    return this._hostId;
-  }
-
-  get targetCount(): number {
-    return this._targetCount;
-  }
+  get phase(): string { return this._phase; }
+  get hostId(): string { return this._hostId; }
+  get targetCount(): number { return this._targetCount; }
+  get playerCount(): number { return this.players.size; }
 
   private itPlayerId = "";
   private winnerId = "";
@@ -48,26 +57,29 @@ export class GameRoom {
   private lastTaggedPlayerId = "";
   private tagTick = 0;
 
+  private shields: ShieldPickup[] = [];
+  private shieldRespawnTimer = 0;
+  private worldMinX = 0;
+  private worldMinY = 0;
+  private worldMaxX = WORLD.width;
+  private worldMaxY = WORLD.height;
+
+  get isFull(): boolean { return this.players.size >= MAX_PLAYERS; }
+
+  get isLobbyReady(): boolean {
+    return this.players.size >= 2 && this.players.size >= this._targetCount;
+  }
+
   get lobbyState(): GameState {
     const arr: { id: string; name: string }[] = [];
-    for (const p of this.players.values()) {
-      arr.push({ id: p.id, name: p.name });
-    }
+    for (const p of this.players.values()) arr.push({ id: p.id, name: p.name });
     return {
       phase: "lobby",
       playerCount: this.players.size,
-      targetCount: this.targetCount,
+      targetCount: this._targetCount,
       players: arr,
-      hostId: this.hostId,
+      hostId: this._hostId,
     };
-  }
-
-  get isFull(): boolean {
-    return this.players.size >= MAX_PLAYERS;
-  }
-
-  get isLobbyReady(): boolean {
-    return this.players.size >= 2 && this.players.size >= this.targetCount;
   }
 
   addPlayer(id: string, name: string): { hostId: string; isHost: boolean } {
@@ -76,29 +88,28 @@ export class GameRoom {
 
     const spawn = SPAWN_POINTS[this.players.size % SPAWN_POINTS.length];
     const p: ServerPlayer = {
-      id,
-      name: name.slice(0, 16) || "Survivor",
+      id, name: name.slice(0, 16) || "Survivor",
       pos: { ...spawn },
-      lastDir: { x: 0, y: 0 },
-      lastSeq: 0,
-      eliminated: false,
-      graceTicks: 0,
-      itElapsed: 0,
+      lastDir: { x: 0, y: 0 }, lastSeq: 0,
+      eliminated: false, graceTicks: 0, itElapsed: 0,
+      sprintTicks: 0, sprintCooldown: 0,
+      invisibleTicks: 0, invisibleCooldown: 0,
+      shieldTimer: 0,
     };
     this.players.set(id, p);
-    return { hostId: this.hostId, isHost };
+    return { hostId: this._hostId, isHost };
   }
 
   removePlayer(id: string): void {
     this.players.delete(id);
-    if (this.hostId === id && this.players.size > 0) {
+    if (this._hostId === id && this.players.size > 0) {
       this._hostId = this.players.keys().next().value!;
     }
-    if (this.phase === "playing") this.checkWin();
+    if (this._phase === "playing") this.checkWin();
   }
 
   setTarget(id: string, target: number): boolean {
-    if (id !== this.hostId || this.phase !== "lobby") return false;
+    if (id !== this._hostId || this._phase !== "lobby") return false;
     this._targetCount = Math.max(2, Math.min(MAX_PLAYERS, target));
     return true;
   }
@@ -107,13 +118,18 @@ export class GameRoom {
     if (this.players.size < 2) return;
     this._phase = "playing";
     this.tickCount = 0;
+    this.worldMinX = 0; this.worldMinY = 0;
+    this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
+    this.shields = [];
+    this.shieldRespawnTimer = 0;
 
     const ids = [...this.players.keys()];
     for (let i = 0; i < ids.length; i++) {
       const p = this.players.get(ids[i])!;
-      p.eliminated = false;
-      p.graceTicks = 0;
-      p.itElapsed = 0;
+      p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
+      p.sprintTicks = 0; p.sprintCooldown = 0;
+      p.invisibleTicks = 0; p.invisibleCooldown = 0;
+      p.shieldTimer = 0;
       const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
       p.pos = { ...spawn };
     }
@@ -129,26 +145,30 @@ export class GameRoom {
     this._hostId = "";
     this._targetCount = MAX_PLAYERS;
     this.itPlayerId = "";
-    this.winnerId = "";
-    this.winnerName = "";
-    this.tickCount = 0;
+    this.winnerId = ""; this.winnerName = "";
+    this.tickCount = 0; this.lastTaggedPlayerId = ""; this.tagTick = 0;
+    this.shields = []; this.shieldRespawnTimer = 0;
+    this.worldMinX = 0; this.worldMinY = 0;
+    this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
   }
 
   restartGame(): void {
     if (this.players.size < 2) return;
     this._phase = "playing";
     this.tickCount = 0;
-    this.winnerId = "";
-    this.winnerName = "";
-    this.lastTaggedPlayerId = "";
-    this.tagTick = 0;
+    this.winnerId = ""; this.winnerName = "";
+    this.lastTaggedPlayerId = ""; this.tagTick = 0;
+    this.worldMinX = 0; this.worldMinY = 0;
+    this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
+    this.shields = []; this.shieldRespawnTimer = 0;
 
     const ids = [...this.players.keys()];
     for (let i = 0; i < ids.length; i++) {
       const p = this.players.get(ids[i])!;
-      p.eliminated = false;
-      p.graceTicks = 0;
-      p.itElapsed = 0;
+      p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
+      p.sprintTicks = 0; p.sprintCooldown = 0;
+      p.invisibleTicks = 0; p.invisibleCooldown = 0;
+      p.shieldTimer = 0;
       const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
       p.pos = { ...spawn };
     }
@@ -158,7 +178,7 @@ export class GameRoom {
     it.graceTicks = GRACE_TICKS;
   }
 
-  setInput(id: string, seq: number, dir: Vec2): void {
+  setInput(id: string, seq: number, dir: Vec2, sprint: boolean, invisible: boolean): void {
     const p = this.players.get(id);
     if (!p || seq <= p.lastSeq) return;
     let { x, y } = dir;
@@ -167,48 +187,60 @@ export class GameRoom {
     if (len > 1) { x /= len; y /= len; }
     p.lastDir = { x, y };
     p.lastSeq = seq;
+
+    if (sprint && p.sprintCooldown <= 0 && p.sprintTicks <= 0) {
+      p.sprintTicks = SPRINT_DURATION_TICKS;
+      p.sprintCooldown = SPRINT_COOLDOWN_TICKS;
+    }
+    if (invisible && p.invisibleCooldown <= 0 && p.invisibleTicks <= 0) {
+      p.invisibleTicks = INVISIBLE_DURATION_TICKS;
+      p.invisibleCooldown = INVISIBLE_COOLDOWN_TICKS;
+    }
   }
 
   tick(): void {
-    if (this.phase !== "playing") return;
+    if (this._phase !== "playing") return;
     const dt = 1 / TICK_RATE;
     this.tickCount++;
 
     const it = this.players.get(this.itPlayerId);
-    if (!it || it.eliminated) {
-      this.pickNextIt();
-      return;
+    if (!it || it.eliminated) { this.pickNextIt(); return; }
+
+    for (const p of this.players.values()) {
+      if (p.sprintCooldown > 0) p.sprintCooldown--;
+      if (p.sprintTicks > 0) p.sprintTicks--;
+      if (p.invisibleCooldown > 0) p.invisibleCooldown--;
+      if (p.invisibleTicks > 0) p.invisibleTicks--;
+      if (p.shieldTimer > 0) p.shieldTimer--;
     }
 
     if (it.graceTicks > 0) {
       it.graceTicks--;
+    } else if (it.shieldTimer > 0) {
     } else {
       it.itElapsed += dt;
       if (it.itElapsed >= IT_ELIMINATE_TIME) {
         it.eliminated = true;
+        this.shrinkWorld();
         this.pickNextIt();
         this.checkWin();
         return;
       }
     }
 
+    const bounds = { minX: this.worldMinX, minY: this.worldMinY, maxX: this.worldMaxX, maxY: this.worldMaxY };
     for (const p of this.players.values()) {
-      if (p.id === this.itPlayerId) continue;
       if (p.eliminated) continue;
-      p.pos.x += p.lastDir.x * PLAYER_SPEED * dt;
-      p.pos.y += p.lastDir.y * PLAYER_SPEED * dt;
-      p.pos.x = Math.max(0, Math.min(WORLD.width, p.pos.x));
-      p.pos.y = Math.max(0, Math.min(WORLD.height, p.pos.y));
+      const speed = (p.sprintTicks > 0 ? PLAYER_SPEED * SPRINT_SPEED_MULT : PLAYER_SPEED);
+      p.pos.x += p.lastDir.x * speed * dt;
+      p.pos.y += p.lastDir.y * speed * dt;
+      p.pos.x = Math.max(bounds.minX, Math.min(bounds.maxX, p.pos.x));
+      p.pos.y = Math.max(bounds.minY, Math.min(bounds.maxY, p.pos.y));
     }
 
-    it.pos.x += it.lastDir.x * PLAYER_SPEED * dt;
-    it.pos.y += it.lastDir.y * PLAYER_SPEED * dt;
-    it.pos.x = Math.max(0, Math.min(WORLD.width, it.pos.x));
-    it.pos.y = Math.max(0, Math.min(WORLD.height, it.pos.y));
-
     for (const p of this.players.values()) {
-      if (p.id === this.itPlayerId) continue;
-      if (p.eliminated) continue;
+      if (p.eliminated || p.id === this.itPlayerId) continue;
+      if (p.shieldTimer > 0) continue;
       const dx = it.pos.x - p.pos.x;
       const dy = it.pos.y - p.pos.y;
       if (Math.hypot(dx, dy) < TAG_RANGE) {
@@ -219,6 +251,56 @@ export class GameRoom {
         this.tagTick = this.tickCount;
         break;
       }
+    }
+
+    for (const p of this.players.values()) {
+      if (p.eliminated) continue;
+      for (const s of this.shields) {
+        if (!s.active) continue;
+        const dx = p.pos.x - s.pos.x;
+        const dy = p.pos.y - s.pos.y;
+        if (Math.hypot(dx, dy) < SHIELD_PICKUP_RANGE) {
+          p.shieldTimer = SHIELD_DURATION * TICK_RATE;
+          s.active = false;
+        }
+      }
+    }
+
+    this.shieldRespawnTimer--;
+    if (this.shieldRespawnTimer <= 0) {
+      const activeCount = this.shields.filter((s) => s.active).length;
+      if (activeCount < MAX_SHIELDS) {
+        const inactiveIdx = this.shields.findIndex((s) => !s.active);
+        if (inactiveIdx >= 0) {
+          this.shields[inactiveIdx] = { pos: this.randomShieldPos(), active: true };
+        } else {
+          this.shields.push({ pos: this.randomShieldPos(), active: true });
+        }
+      }
+      this.shieldRespawnTimer = SHIELD_RESPAWN_TICKS;
+    }
+  }
+
+  private randomShieldPos(): Vec2 {
+    const margin = 80;
+    return {
+      x: this.worldMinX + margin + Math.random() * (this.worldMaxX - this.worldMinX - margin * 2),
+      y: this.worldMinY + margin + Math.random() * (this.worldMaxY - this.worldMinY - margin * 2),
+    };
+  }
+
+  private shrinkWorld(): void {
+    if (this.worldMaxX - this.worldMinX > MIN_WORLD_SIZE) {
+      this.worldMinX += SHRINK_STEP;
+      this.worldMaxX -= SHRINK_STEP;
+    }
+    if (this.worldMaxY - this.worldMinY > MIN_WORLD_SIZE) {
+      this.worldMinY += SHRINK_STEP;
+      this.worldMaxY -= SHRINK_STEP;
+    }
+    for (const p of this.players.values()) {
+      p.pos.x = Math.max(this.worldMinX, Math.min(this.worldMaxX, p.pos.x));
+      p.pos.y = Math.max(this.worldMinY, Math.min(this.worldMaxY, p.pos.y));
     }
   }
 
@@ -244,26 +326,21 @@ export class GameRoom {
   }
 
   snapshot(): GameState {
-    if (this.phase === "lobby") return this.lobbyState;
+    if (this._phase === "lobby") return this.lobbyState;
 
     const players: PlayerSnapshot[] = [];
     for (const p of this.players.values()) {
       players.push({
-        id: p.id,
-        name: p.name,
-        pos: { ...p.pos },
-        eliminated: p.eliminated,
-        graceTicks: p.graceTicks,
+        id: p.id, name: p.name, pos: { ...p.pos },
+        eliminated: p.eliminated, graceTicks: p.graceTicks,
+        sprintActive: p.sprintTicks > 0,
+        invisibleActive: p.invisibleTicks > 0,
+        shieldTimer: p.shieldTimer > 0 ? Math.ceil(p.shieldTimer / TICK_RATE) : 0,
       });
     }
 
-    if (this.phase === "finished") {
-      return {
-        phase: "finished",
-        winnerId: this.winnerId,
-        winnerName: this.winnerName,
-        players,
-      };
+    if (this._phase === "finished") {
+      return { phase: "finished", winnerId: this.winnerId, winnerName: this.winnerName, players };
     }
 
     const it = this.players.get(this.itPlayerId);
@@ -276,6 +353,11 @@ export class GameRoom {
       serverTime: Date.now(),
       lastTaggedPlayerId: recentTag,
       tagTick: this.tagTick,
+      shields: this.shields.filter((s) => s.active),
+      worldBounds: {
+        minX: this.worldMinX, minY: this.worldMinY,
+        maxX: this.worldMaxX, maxY: this.worldMaxY,
+      },
     };
   }
 }
