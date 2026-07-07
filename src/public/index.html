@@ -14,7 +14,7 @@
     .overlay.hidden { display: none; }
     .box {
       background: #232731; padding: 32px; border-radius: 12px; text-align: center;
-      min-width: 340px; border: 1px solid #3a3f4b;
+      min-width: 340px; max-width: 500px; border: 1px solid #3a3f4b; max-height: 90vh; overflow-y: auto;
     }
     .box h1 { margin: 0 0 8px; font-size: 24px; }
     .box p { margin: 4px 0; color: #aaa; }
@@ -33,6 +33,7 @@
     .btn-primary:hover { background: #4ad06a; }
     .btn-danger { background: #e85c5c; color: #111; font-weight: bold; }
     .btn-danger:hover { background: #d04a4a; }
+    .btn-active { background: #5ab0f0; color: #111; font-weight: bold; }
     #player-list { list-style: none; padding: 0; margin: 12px 0; }
     #player-list li { padding: 4px 8px; background: #2a2e38; margin: 4px 0; border-radius: 4px; }
     #winner-box { border: 2px solid #f0c040; }
@@ -57,16 +58,58 @@
     .code-display {
       font-size: 36px; letter-spacing: 8px; color: #5ce87b; margin: 8px 0; font-weight: bold;
     }
+    .skin-grid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
+    .skin-btn {
+      width: 36px; height: 36px; border-radius: 50%; border: 2px solid #3a3f4b; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; font-size: 10px; color: #111; font-weight: bold;
+    }
+    .skin-btn.selected { border-color: #5ce87b; }
+    .skin-btn.locked { opacity: 0.3; cursor: default; }
+    .map-grid { display: flex; gap: 8px; justify-content: center; margin: 8px 0; }
+    .map-btn {
+      width: 80px; height: 60px; background: #2a2e38; border: 2px solid #3a3f4b; border-radius: 6px;
+      cursor: pointer; font-size: 11px; color: #aaa; display: flex; align-items: center; justify-content: center;
+    }
+    .map-btn.selected { border-color: #5ce87b; color: #5ce87b; }
+    #controls-panel {
+      position: fixed; top: 8px; right: 8px; background: rgba(35,39,49,0.85); padding: 10px 14px;
+      border-radius: 8px; font-size: 11px; z-index: 10; pointer-events: none; min-width: 150px;
+      line-height: 1.7; color: #aaa;
+    }
+    #controls-panel.hidden { display: none; }
+    #controls-panel b { color: #eee; }
+    #controls-toggle {
+      position: fixed; top: 8px; right: 8px; z-index: 11; font-size: 11px;
+      background: rgba(35,39,49,0.7); color: #aaa; border: 1px solid #3a3f4b;
+      border-radius: 4px; padding: 3px 8px; cursor: pointer;
+    }
+    #controls-toggle.hidden { display: none; }
+    #stats-panel {
+      position: fixed; top: 8px; right: 8px; background: rgba(35,39,49,0.85); padding: 10px 14px;
+      border-radius: 8px; font-size: 12px; z-index: 10; pointer-events: none; min-width: 120px;
+    }
+    #stats-panel.hidden { display: none; }
+    #emote-hint {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: rgba(255,255,255,0.15); font-size: 12px; z-index: 5; pointer-events: none;
+    }
+    #emote-hint.hidden { display: none; }
+    #spectator-label {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      color: #f0c040; font-size: 28px; font-weight: bold; z-index: 10; pointer-events: none;
+      text-shadow: 0 0 20px rgba(240,192,64,0.5);
+    }
+    #spectator-label.hidden { display: none; }
+    .controls-row { display: flex; gap: 6px; justify-content: center; margin: 6px 0; flex-wrap: wrap; }
   </style>
 </head>
 <body>
   <div id="hud">connecting...</div>
   <canvas id="game"></canvas>
 
-  <!-- Room select -->
   <div id="room-screen" class="overlay">
     <div class="box">
-      <h1>🏷️ Tag Game</h1>
+      <h1>Tag Game</h1>
       <p style="margin-bottom:16px;">Create or join a room to play</p>
       <button class="btn btn-primary" id="create-room-btn" style="padding:12px 32px;font-size:16px;">Create Room</button>
       <br><br>
@@ -78,52 +121,80 @@
     </div>
   </div>
 
-  <!-- Lobby -->
   <div id="lobby" class="overlay hidden">
     <div class="box">
-      <h1>🏷️ Tag Game</h1>
+      <h1>Tag Game</h1>
       <p>Room: <span id="room-code" class="code-display" style="font-size:24px;letter-spacing:4px;"></span></p>
       <p id="lobby-status">Waiting for players...</p>
       <div id="host-controls" class="hidden">
         <p>Players:</p>
-        <button class="btn" id="dec-btn">−</button>
+        <button class="btn" id="dec-btn">-</button>
         <span class="count" id="target-count" style="font-size:20px;margin:0 8px;">4</span>
         <button class="btn" id="inc-btn">+</button>
         <br><br>
+        <p style="margin:8px 0 4px;">Map:</p>
+        <div class="map-grid" id="map-grid"></div>
+        <p style="margin:8px 0 4px;">
+          <button class="btn" id="team-mode-btn">Team Mode: OFF</button>
+        </p>
         <button id="start-btn" class="btn btn-primary" style="padding:10px 32px;font-size:16px;">Start Game</button>
       </div>
       <ul id="player-list"></ul>
       <p id="lobby-hint" style="color:#888;font-size:13px;">Waiting for more players...</p>
+      <p style="margin:8px 0 4px; color:#aaa; font-size:13px;">Your Skin:</p>
+      <div class="skin-grid" id="skin-grid"></div>
       <hr style="border-color:#3a3f4b;margin:16px 0;">
       <div style="font-size:13px;color:#aaa;text-align:left;line-height:1.6;">
         <b style="color:#eee;">How to play:</b><br>
-        🏃 <b style="color:#e85c5c;">IT</b> (red) chases others — tag to swap IT<br>
-        ⏱️ Hold IT for <b>2 min</b> → eliminated<br>
-        🛡️ New IT gets <b>5s protection</b> (✦ protected)<br>
-        🏆 Last player standing <b>wins</b><br>
-        ⌨️ <b>WASD</b> / <b>Arrow Keys</b> to move<br>
-        ⚡ <b>Shift</b> to sprint | <b>Space</b> to go invisible<br>
-        🛡️ Collect <b>shield</b> orbs for 5s immunity
+        IT (red) chases others -- tag to swap IT<br>
+        Hold IT for 2 min and get eliminated<br>
+        New IT gets 5s protection<br>
+        Last player standing wins<br>
+        <b>Controls:</b> WASD/Arrows move | Shift sprint | Space invisible<br>
+        Q dash | E place trap | R teleport (click target) | 1-4 emotes<br>
+        Collect shield orbs for 5s immunity<br>
+        Collect power-ups: speed (green), freeze (blue), magnet (orange)<br>
+        Watch out for red danger zones and swirling gravity wells!
       </div>
     </div>
   </div>
 
-  <!-- Winner -->
   <div id="winner" class="overlay hidden">
     <div class="box" id="winner-box">
-      <h1>🏆 Winner!</h1>
+      <h1>Winner!</h1>
       <p id="winner-name" style="font-size:20px;"></p>
+      <div id="end-stats" style="text-align:left;margin:12px 0;font-size:12px;color:#aaa;"></div>
       <br>
       <button id="play-again-btn" class="btn btn-primary" style="padding:10px 32px;font-size:16px;">Play Again</button>
     </div>
   </div>
 
-  <!-- HUD -->
   <div id="it-label" class="hidden"></div>
   <div id="it-bar-outer" class="hidden">
     <div id="it-bar-inner"></div>
   </div>
   <div id="ability-hud" class="hidden"></div>
+  <div id="stats-panel" class="hidden"></div>
+  <div id="controls-panel" class="hidden">
+    <b>Controls:</b><br>
+    <b>WASD</b> / <b>Arrows</b> — Move<br>
+    <b>Shift</b> — Sprint<br>
+    <b>Space</b> — Invisible<br>
+    <b>Q</b> — Dash<br>
+    <b>E</b> — Place Trap<br>
+    <b>R</b> — Teleport (click target)<br>
+    <b>1-4</b> — Emotes<br>
+    <b>H</b> — Toggle this help<br>
+    <br>
+    <b>Power-ups:</b><br>
+    <span style="color:#5ce87b">Green &gt;&gt;</span> — Speed Boost<br>
+    <span style="color:#5ab0f0">Blue *</span> — Freeze Enemy<br>
+    <span style="color:#f0924c">Orange U</span> — Magnet Pull<br>
+    <span style="color:#f0c040">Gold S</span> — Shield (5s)
+  </div>
+  <div id="controls-toggle" class="hidden" title="Press H to toggle help">H: Help</div>
+  <div id="emote-hint" class="hidden">1:CLOSE 2:NICE 3:HELP 4:GG</div>
+  <div id="spectator-label" class="hidden">SPECTATING</div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>

@@ -64,7 +64,7 @@ io.on("connection", (socket) => {
     if (room.phase !== "lobby") return reply({ ok: false, reason: "Game already started" });
     if (room.isFull) return reply({ ok: false, reason: "Room is full" });
 
-    const { hostId } = room.addPlayer(socket.id, msg.name);
+    room.addPlayer(socket.id, msg.name, msg.skinId);
     socketRoom.set(socket.id, msg.code);
     socket.join(msg.code);
     reply({ ok: true, selfId: socket.id });
@@ -78,6 +78,30 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
     if (!room) return;
     room.setTarget(socket.id, Math.max(2, Math.min(MAX_PLAYERS, targetCount)));
+  });
+
+  socket.on("setMap", (mapIndex: number) => {
+    const code = socketRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+    room.setMap(socket.id, mapIndex);
+  });
+
+  socket.on("setTeamMode", (on: boolean) => {
+    const code = socketRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+    room.setTeamMode(socket.id, !!on);
+  });
+
+  socket.on("setSkin", (skinId: string) => {
+    const code = socketRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room) return;
+    room.setSkin(socket.id, typeof skinId === "string" ? skinId : "default");
   });
 
   socket.on("start", () => {
@@ -103,7 +127,9 @@ io.on("connection", (socket) => {
     if (!room || !msg || typeof msg.seq !== "number") return;
     room.setInput(
       socket.id, msg.seq, msg.dir ?? { x: 0, y: 0 },
-      !!msg.sprint, !!msg.invisible
+      !!msg.sprint, !!msg.invisible,
+      !!msg.dash, !!msg.placeTrap,
+      msg.teleport, msg.emote
     );
   });
 
