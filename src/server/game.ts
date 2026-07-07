@@ -1,11 +1,11 @@
 import {
-  Vec2, PlayerSnapshot, GameState, ShieldPickup,
+  Vec2, PlayerSnapshot, GameState, ShieldPickup, Obstacle,
   PLAYER_SPEED, WORLD, TICK_RATE, MAX_PLAYERS,
   TAG_RANGE, IT_ELIMINATE_TIME, GRACE_TICKS,
   SHIELD_DURATION, SHIELD_RESPAWN_TICKS, MAX_SHIELDS, SHIELD_PICKUP_RANGE,
   SPRINT_SPEED_MULT, STAMINA_MAX, STAMINA_DRAIN_PER_TICK, STAMINA_REGEN_PER_TICK,
   INVISIBLE_DURATION_TICKS, INVISIBLE_COOLDOWN_TICKS,
-  SHRINK_STEP, MIN_WORLD_SIZE,
+  SHRINK_STEP, MIN_WORLD_SIZE, OBSTACLE_PLAYER_RADIUS,
 } from "../shared/protocol.js";
 
 interface ServerPlayer {
@@ -29,7 +29,7 @@ const SPAWN_POINTS: Vec2[] = [
   { x: 200, y: 1050 }, { x: 1400, y: 1050 },
   { x: 800, y: 600 },
   { x: 400, y: 300 }, { x: 1200, y: 300 },
-  { x: 400, y: 900 }, { x: 1200, y: 900 },
+  { x: 400, y: 900 },
 ];
 
 function randomSpawn(worldBounds: { minX: number; minY: number; maxX: number; maxY: number }): Vec2 {
@@ -59,6 +59,7 @@ export class GameRoom {
 
   private shields: ShieldPickup[] = [];
   private shieldRespawnTimer = 0;
+  private obstacles: Obstacle[] = [];
   private worldMinX = 0;
   private worldMinY = 0;
   private worldMaxX = WORLD.width;
@@ -122,6 +123,7 @@ export class GameRoom {
     this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
     this.shields = [];
     this.shieldRespawnTimer = 0;
+    this.obstacles = this.generateObstacles();
 
     const ids = [...this.players.keys()];
     for (let i = 0; i < ids.length; i++) {
@@ -139,19 +141,6 @@ export class GameRoom {
     it.graceTicks = GRACE_TICKS;
   }
 
-  resetGame(): void {
-    this._phase = "lobby";
-    this.players.clear();
-    this._hostId = "";
-    this._targetCount = MAX_PLAYERS;
-    this.itPlayerId = "";
-    this.winnerId = ""; this.winnerName = "";
-    this.tickCount = 0; this.lastTaggedPlayerId = ""; this.tagTick = 0;
-    this.shields = []; this.shieldRespawnTimer = 0;
-    this.worldMinX = 0; this.worldMinY = 0;
-    this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
-  }
-
   restartGame(): void {
     if (this.players.size < 2) return;
     this._phase = "playing";
@@ -161,6 +150,7 @@ export class GameRoom {
     this.worldMinX = 0; this.worldMinY = 0;
     this.worldMaxX = WORLD.width; this.worldMaxY = WORLD.height;
     this.shields = []; this.shieldRespawnTimer = 0;
+    this.obstacles = this.generateObstacles();
 
     const ids = [...this.players.keys()];
     for (let i = 0; i < ids.length; i++) {
@@ -237,6 +227,33 @@ export class GameRoom {
       p.pos.y += p.lastDir.y * speed * dt;
       p.pos.x = Math.max(bounds.minX, Math.min(bounds.maxX, p.pos.x));
       p.pos.y = Math.max(bounds.minY, Math.min(bounds.maxY, p.pos.y));
+
+      for (const o of this.obstacles) {
+        const closestX = Math.max(o.x, Math.min(p.pos.x, o.x + o.w));
+        const closestY = Math.max(o.y, Math.min(p.pos.y, o.y + o.h));
+        const dx = p.pos.x - closestX;
+        const dy = p.pos.y - closestY;
+        const dist = Math.hypot(dx, dy);
+        if (dist < OBSTACLE_PLAYER_RADIUS) {
+          if (dist === 0) {
+            const pushLeft = p.pos.x - o.x;
+            const pushTop = p.pos.y - o.y;
+            const pushRight = (o.x + o.w) - p.pos.x;
+            const pushBottom = (o.y + o.h) - p.pos.y;
+            const minX = Math.min(pushLeft, pushRight);
+            const minY = Math.min(pushTop, pushBottom);
+            if (minX < minY) {
+              p.pos.x += pushLeft < pushRight ? -OBSTACLE_PLAYER_RADIUS : OBSTACLE_PLAYER_RADIUS;
+            } else {
+              p.pos.y += pushTop < pushBottom ? -OBSTACLE_PLAYER_RADIUS : OBSTACLE_PLAYER_RADIUS;
+            }
+          } else {
+            const overlap = OBSTACLE_PLAYER_RADIUS - dist;
+            p.pos.x += (dx / dist) * overlap;
+            p.pos.y += (dy / dist) * overlap;
+          }
+        }
+      }
     }
 
     for (const p of this.players.values()) {
@@ -288,6 +305,31 @@ export class GameRoom {
       x: this.worldMinX + margin + Math.random() * (this.worldMaxX - this.worldMinX - margin * 2),
       y: this.worldMinY + margin + Math.random() * (this.worldMaxY - this.worldMinY - margin * 2),
     };
+  }
+
+  private generateObstacles(): Obstacle[] {
+    const w = WORLD.width;
+    const h = WORLD.height;
+    const margin = 120;
+    const minDim = 50;
+    const maxDim = 140;
+
+    const layouts: Obstacle[] = [
+      { x: w * 0.2, y: h * 0.25, w: 120, h: 30 },
+      { x: w * 0.8, y: h * 0.25, w: 30, h: 120 },
+      { x: w * 0.5, y: h * 0.5, w: 100, h: 30 },
+      { x: w * 0.35, y: h * 0.7, w: 30, h: 100 },
+      { x: w * 0.65, y: h * 0.7, w: 120, h: 30 },
+      { x: w * 0.15, y: h * 0.5, w: 80, h: 30 },
+      { x: w * 0.85, y: h * 0.5, w: 30, h: 80 },
+      { x: w * 0.5, y: h * 0.2, w: 30, h: 80 },
+      { x: w * 0.5, y: h * 0.8, w: 80, h: 30 },
+      { x: w * 0.25, y: h * 0.4, w: 60, h: 30 },
+      { x: w * 0.75, y: h * 0.6, w: 30, h: 60 },
+      { x: w * 0.4, y: h * 0.35, w: 30, h: 70 },
+    ];
+
+    return layouts;
   }
 
   private shrinkWorld(): void {
@@ -356,6 +398,7 @@ export class GameRoom {
       lastTaggedPlayerId: recentTag,
       tagTick: this.tagTick,
       shields: this.shields.filter((s) => s.active),
+      obstacles: this.obstacles,
       worldBounds: {
         minX: this.worldMinX, minY: this.worldMinY,
         maxX: this.worldMaxX, maxY: this.worldMaxY,

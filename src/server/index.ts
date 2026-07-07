@@ -92,7 +92,7 @@ io.on("connection", (socket) => {
     const code = socketRoom.get(socket.id);
     if (!code) return;
     const room = rooms.get(code);
-    if (!room) return;
+    if (!room || socket.id !== room.hostId) return;
     room.restartGame();
   });
 

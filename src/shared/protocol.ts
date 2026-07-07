@@ -5,9 +5,9 @@ export const WORLD = { width: 1600, height: 1200 };
 export const MAX_PLAYERS = 8;
 export const TAG_RANGE = 45;
 export const IT_ELIMINATE_TIME = 120;
-export const GRACE_TICKS = TICK_RATE * 2;
+export const GRACE_TICKS = TICK_RATE * 5;
 
-export const SHIELD_DURATION = 20;
+export const SHIELD_DURATION = 5;
 export const SHIELD_RESPAWN_TICKS = TICK_RATE * 10;
 export const MAX_SHIELDS = 3;
 export const SHIELD_PICKUP_RANGE = 36;
@@ -23,6 +23,8 @@ export const INVISIBLE_COOLDOWN_TICKS = TICK_RATE * 8;
 export const SHRINK_STEP = 100;
 export const MIN_WORLD_SIZE = 400;
 
+export const OBSTACLE_PLAYER_RADIUS = 14;
+
 export type GamePhase = "lobby" | "playing" | "finished";
 
 export interface Vec2 { x: number; y: number }
@@ -30,6 +32,13 @@ export interface Vec2 { x: number; y: number }
 export interface ShieldPickup {
   pos: Vec2;
   active: boolean;
+}
+
+export interface Obstacle {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface LobbyState {
@@ -49,6 +58,7 @@ export interface PlayingState {
   lastTaggedPlayerId: string;
   tagTick: number;
   shields: ShieldPickup[];
+  obstacles: Obstacle[];
   worldBounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
@@ -78,17 +88,6 @@ export interface InputMsg {
   dir: Vec2;
   sprint: boolean;
   invisible: boolean;
-}
-
-export interface JoinReply {
-  ok: boolean;
-  reason?: string;
-  selfId?: string;
-  hostId?: string;
-}
-
-export interface SetTargetMsg {
-  targetCount: number;
 }
 
 export interface CreateRoomReply {

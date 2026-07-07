@@ -80,6 +80,7 @@ function connectSocket() {
     }
 
     if (state.phase === "playing") {
+      roomScreen.classList.add("hidden");
       lobbyEl.classList.add("hidden");
       winnerEl.classList.add("hidden");
       itLabel.classList.remove("hidden");
@@ -123,6 +124,7 @@ function connectSocket() {
     }
 
     if (state.phase === "finished") {
+      roomScreen.classList.add("hidden");
       lobbyEl.classList.add("hidden");
       winnerEl.classList.remove("hidden");
       itLabel.classList.add("hidden");
@@ -192,6 +194,7 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => {
   keys.delete(e.code);
   if (e.code === "ShiftLeft" || e.code === "ShiftRight") sprintPressed = false;
+  if (e.code === "Space") invisiblePressed = false;
 });
 
 canvas.addEventListener("dblclick", () => {
@@ -240,6 +243,16 @@ function render() {
     ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
     ctx.setLineDash([]);
 
+    if (state.obstacles) {
+      for (const o of state.obstacles) {
+        ctx.fillStyle = "#3a3f4b";
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.strokeStyle = "#555b68";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
+      }
+    }
+
     for (const s of state.shields) {
       const pulse = 10 + Math.sin(performance.now() / 200) * 3;
       ctx.fillStyle = "rgba(240,192,64,0.15)";
@@ -267,8 +280,8 @@ function render() {
 
       if (p.eliminated) {
         ctx.globalAlpha = 0.2;
-      } else if (p.invisibleActive) {
-        ctx.globalAlpha = 0.3;
+      } else if (p.invisibleActive && p.id !== selfId) {
+        continue;
       }
 
       const isIt = state.phase === "playing" && p.id === state.itPlayerId;
