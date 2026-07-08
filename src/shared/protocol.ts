@@ -133,6 +133,7 @@ export interface LobbyState {
   hostId: string;
   mapIndex: number;
   teamMode: boolean;
+  botCount?: number;
 }
 
 export interface PlayingState {

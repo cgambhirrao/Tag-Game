@@ -26,7 +26,7 @@ function generateCode(): string {
 
 function cleanupRoom(code: string): void {
   const room = rooms.get(code);
-  if (room && room.playerCount === 0) {
+  if (room && room.humanCount === 0) {
     rooms.delete(code);
   }
 }
@@ -102,6 +102,22 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
     if (!room) return;
     room.setSkin(socket.id, typeof skinId === "string" ? skinId : "default");
+  });
+
+  socket.on("addBot", () => {
+    const code = socketRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room || socket.id !== room.hostId) return;
+    room.addBot();
+  });
+
+  socket.on("removeBot", () => {
+    const code = socketRoom.get(socket.id);
+    if (!code) return;
+    const room = rooms.get(code);
+    if (!room || socket.id !== room.hostId) return;
+    room.removeBot();
   });
 
   socket.on("start", () => {

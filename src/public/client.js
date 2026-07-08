@@ -51,6 +51,9 @@ const controlsToggle = document.getElementById("controls-toggle");
 const skinGrid = document.getElementById("skin-grid");
 const mapGrid = document.getElementById("map-grid");
 const teamModeBtn = document.getElementById("team-mode-btn");
+const addBotBtn = document.getElementById("add-bot-btn");
+const removeBotBtn = document.getElementById("remove-bot-btn");
+const botCountSpan = document.getElementById("bot-count");
 
 let socket = null;
 let selfId = null;
@@ -200,6 +203,14 @@ teamModeBtn.addEventListener("click", () => {
   socket.emit("setTeamMode", teamMode);
 });
 
+addBotBtn.addEventListener("click", () => {
+  socket.emit("addBot");
+});
+
+removeBotBtn.addEventListener("click", () => {
+  socket.emit("removeBot");
+});
+
 function connectSocket() {
   socket = io();
   seq = 0;
@@ -243,12 +254,17 @@ function connectSocket() {
       const isHost = selfId === state.hostId;
       hostControls.classList.toggle("hidden", !isHost);
       targetCountSpan.textContent = state.targetCount;
+      const botCount = state.botCount || 0;
+      botCountSpan.textContent = botCount;
       lobbyStatus.textContent = `Players: ${state.playerCount} / ${state.targetCount}`;
-      lobbyHint.textContent = state.playerCount < 2
-        ? "Need at least 2 players to start."
-        : state.playerCount < state.targetCount
-          ? "Waiting for more players..."
-          : "Starting game...";
+      const hasBots = botCount > 0;
+      if (state.playerCount < 2 && !hasBots) {
+        lobbyHint.textContent = "Add bots or wait for players to start.";
+      } else if (state.playerCount < state.targetCount) {
+        lobbyHint.textContent = hasBots ? "Waiting for more players or add more bots..." : "Waiting for more players...";
+      } else {
+        lobbyHint.textContent = "Starting game...";
+      }
       playerList.innerHTML = "";
       for (const p of state.players) {
         const li = document.createElement("li");

@@ -1,5 +1,5 @@
 import {
-  Vec2, PlayerSnapshot, GameState, ShieldPickup, Obstacle,
+  Vec2, PlayerSnapshot, GameState, ShieldPickup, Obstacle, InputMsg,
   PowerUp, PowerUpType, Trap, DangerZone, MovingObstacle, GravityWell, Emote,
   PLAYER_SPEED, WORLD, TICK_RATE, MAX_PLAYERS,
   TAG_RANGE, IT_ELIMINATE_TIME, GRACE_TICKS,
@@ -18,6 +18,316 @@ import {
   GRAVITY_WELL_RADIUS, GRAVITY_WELL_FORCE, GRAVITY_WELL_SPAWN_TICKS, MAX_GRAVITY_WELLS,
   EMOTE_DURATION_TICKS, MAP_COUNT, EmoteType,
 } from "../shared/protocol.js";
+
+const BOT_NAMES = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf"];
+const BOT_SKINS = ["blue", "red", "gold", "purple", "cyan", "orange", "pink"];
+
+class Bot {
+  readonly id: string;
+  readonly name: string;
+  private reactionTimer = 0;
+  private thinkTimer = 0;
+  private targetDir: Vec2 = { x: 0, y: 0 };
+  private wantSprint = false;
+  private wantInvisible = false;
+  private wantDash = false;
+  private wantTrap = false;
+  private wantTeleport: Vec2 | null = null;
+
+  constructor(index: number) {
+    this.id = `bot_${index}`;
+    this.name = `Bot ${BOT_NAMES[index % BOT_NAMES.length]}`;
+  }
+
+  get skinId(): string {
+    return BOT_SKINS[parseInt(this.id.split("_")[1]) % BOT_SKINS.length];
+  }
+
+  think(
+    room: GameRoom,
+    me: ServerPlayer,
+    allPlayers: ServerPlayer[],
+    shields: ShieldPickup[],
+    powerUps: PowerUp[],
+    traps: Trap[],
+    dangerZones: DangerZone[],
+    gravityWells: GravityWell[],
+    worldBounds: { minX: number; minY: number; maxX: number; maxY: number },
+  ): InputMsg {
+    this.reactionTimer--;
+    this.thinkTimer--;
+
+    if (this.thinkTimer <= 0) {
+      this.thinkTimer = TICK_RATE / 4 + Math.floor(Math.random() * (TICK_RATE / 4));
+      this.computeDecision(room, me, allPlayers, shields, powerUps, traps, dangerZones, gravityWells, worldBounds);
+    }
+
+    const msg: InputMsg = {
+      seq: 0,
+      dir: { ...this.targetDir },
+      sprint: this.wantSprint,
+      invisible: this.wantInvisible,
+      dash: this.wantDash,
+      placeTrap: this.wantTrap,
+      teleport: this.wantTeleport ?? undefined,
+    };
+
+    this.wantInvisible = false;
+    this.wantDash = false;
+    this.wantTrap = false;
+    this.wantTeleport = null;
+
+    return msg;
+  }
+
+  private computeDecision(
+    room: GameRoom,
+    me: ServerPlayer,
+    allPlayers: ServerPlayer[],
+    shields: ShieldPickup[],
+    powerUps: PowerUp[],
+    traps: Trap[],
+    dangerZones: DangerZone[],
+    gravityWells: GravityWell[],
+    worldBounds: { minX: number; minY: number; maxX: number; maxY: number },
+  ): void {
+    const obstacles = room.currentObstacles;
+    const movingObstacles = room.currentMovingObstacles;
+    const isIt = room.currentItId === me.id;
+    const alive = allPlayers.filter((p) => !p.eliminated && p.id !== me.id);
+    if (alive.length === 0) { this.targetDir = { x: 0, y: 0 }; return; }
+
+    let dirX = 0;
+    let dirY = 0;
+    this.wantSprint = false;
+
+    if (isIt) {
+      const target = this.findChaseTarget(me, alive);
+      if (target) {
+        const dx = target.pos.x - me.pos.x;
+        const dy = target.pos.y - me.pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1) { dirX = dx / dist; dirY = dy / dist; }
+
+        if (dist < 120 && me.dashCooldown <= 0 && me.frozenTicks <= 0) {
+          this.wantDash = true;
+        }
+
+        if (dist > 200 && me.stamina > 30) {
+          this.wantSprint = true;
+        }
+
+        if (me.invisibleCooldown <= 0 && me.invisibleTicks <= 0 && dist > 150) {
+          this.wantInvisible = true;
+        }
+
+        if (me.trapCooldown <= 0 && me.frozenTicks <= 0) {
+          const myTraps = traps.filter((t) => t.playerId === me.id && t.active).length;
+          if (myTraps < MAX_TRAPS_PER_PLAYER && Math.random() < 0.05) {
+            this.wantTrap = true;
+          }
+        }
+
+        if (me.teleportCooldown <= 0 && me.frozenTicks <= 0 && !me.teleportUsed && dist > TELEPORT_RANGE * 0.8) {
+          const teleportPos = this.findTeleportTarget(me, target, worldBounds, obstacles);
+          if (teleportPos) {
+            this.wantTeleport = teleportPos;
+          }
+        }
+      }
+    } else {
+      const itPlayer = allPlayers.find((p) => p.id === room.currentItId);
+      if (itPlayer) {
+        const dx = me.pos.x - itPlayer.pos.x;
+        const dy = me.pos.y - itPlayer.pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1) { dirX = dx / dist; dirY = dy / dist; }
+
+        if (dist < 200 && me.stamina > 20) {
+          this.wantSprint = true;
+        }
+
+        if (dist < 100 && me.invisibleCooldown <= 0 && me.invisibleTicks <= 0) {
+          this.wantInvisible = true;
+        }
+
+        if (dist < 80 && me.dashCooldown <= 0 && me.frozenTicks <= 0) {
+          this.wantDash = true;
+        }
+
+        if (me.teleportCooldown <= 0 && me.frozenTicks <= 0 && !me.teleportUsed && dist < 150) {
+          const fleePos = this.findFleeTeleportTarget(me, itPlayer, worldBounds, obstacles);
+          if (fleePos) {
+            this.wantTeleport = fleePos;
+          }
+        }
+      }
+
+      const nearShield = this.findNearest(me.pos, shields.filter((s) => s.active), SHIELD_PICKUP_RANGE * 3);
+      if (nearShield && me.shieldTimer <= 0) {
+        const dx = nearShield.pos.x - me.pos.x;
+        const dy = nearShield.pos.y - me.pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1) {
+          const blend = 0.6;
+          dirX = dirX * (1 - blend) + (dx / dist) * blend;
+          dirY = dirY * (1 - blend) + (dy / dist) * blend;
+          const len = Math.hypot(dirX, dirY);
+          if (len > 1) { dirX /= len; dirY /= len; }
+        }
+      }
+
+      const nearPowerUp = this.findNearest(me.pos, powerUps.filter((p) => p.active), POWERUP_PICKUP_RANGE * 3);
+      if (nearPowerUp) {
+        const dx = nearPowerUp.pos.x - me.pos.x;
+        const dy = nearPowerUp.pos.y - me.pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1) {
+          const blend = 0.3;
+          dirX = dirX * (1 - blend) + (dx / dist) * blend;
+          dirY = dirY * (1 - blend) + (dy / dist) * blend;
+          const len = Math.hypot(dirX, dirY);
+          if (len > 1) { dirX /= len; dirY /= len; }
+        }
+      }
+    }
+
+    for (const dz of dangerZones) {
+      if (dz.ticksLeft <= 0) continue;
+      const dx = me.pos.x - dz.pos.x;
+      const dy = me.pos.y - dz.pos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < dz.radius * 2.5 && dist > 1) {
+        const force = (1 - dist / (dz.radius * 2.5)) * 0.8;
+        dirX += (dx / dist) * force;
+        dirY += (dy / dist) * force;
+      }
+    }
+
+    for (const gw of gravityWells) {
+      if (gw.ticksLeft <= 0) continue;
+      const dx = me.pos.x - gw.pos.x;
+      const dy = me.pos.y - gw.pos.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < gw.radius * 1.5 && dist > 1) {
+        const force = (1 - dist / (gw.radius * 1.5)) * 0.6;
+        dirX += (dx / dist) * force;
+        dirY += (dy / dist) * force;
+      }
+    }
+
+    const allObs = [...obstacles, ...movingObstacles.map((m) => ({ x: m.x, y: m.y, w: m.w, h: m.h }))];
+    for (const o of allObs) {
+      const cx = clamp(me.pos.x, o.x - OBSTACLE_PLAYER_RADIUS * 2, o.x + o.w + OBSTACLE_PLAYER_RADIUS * 2);
+      const cy = clamp(me.pos.y, o.y - OBSTACLE_PLAYER_RADIUS * 2, o.y + o.h + OBSTACLE_PLAYER_RADIUS * 2);
+      const dx = me.pos.x - cx;
+      const dy = me.pos.y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist < OBSTACLE_PLAYER_RADIUS * 3 && dist > 1) {
+        const force = (1 - dist / (OBSTACLE_PLAYER_RADIUS * 3)) * 0.5;
+        dirX += (dx / dist) * force;
+        dirY += (dy / dist) * force;
+      }
+    }
+
+    const margin = 80;
+    if (me.pos.x < worldBounds.minX + margin) dirX += 0.5;
+    if (me.pos.x > worldBounds.maxX - margin) dirX -= 0.5;
+    if (me.pos.y < worldBounds.minY + margin) dirY += 0.5;
+    if (me.pos.y > worldBounds.maxY - margin) dirY -= 0.5;
+
+    const finalLen = Math.hypot(dirX, dirY);
+    if (finalLen > 1) { dirX /= finalLen; dirY /= finalLen; }
+    if (finalLen < 0.1) { dirX = 0; dirY = 0; }
+
+    const jitter = 0.15;
+    dirX += (Math.random() - 0.5) * jitter;
+    dirY += (Math.random() - 0.5) * jitter;
+    const jitterLen = Math.hypot(dirX, dirY);
+    if (jitterLen > 1) { dirX /= jitterLen; dirY /= jitterLen; }
+
+    this.targetDir = { x: dirX, y: dirY };
+  }
+
+  private findChaseTarget(me: ServerPlayer, alive: ServerPlayer[]): ServerPlayer | null {
+    let closest: ServerPlayer | null = null;
+    let minDist = Infinity;
+    for (const p of alive) {
+      if (p.eliminated || p.graceTicks > 0) continue;
+      const dist = Math.hypot(p.pos.x - me.pos.x, p.pos.y - me.pos.y);
+      if (dist < minDist) { minDist = dist; closest = p; }
+    }
+    return closest;
+  }
+
+  private findNearest(mePos: Vec2, items: { pos: Vec2 }[], range: number): { pos: Vec2 } | null {
+    let nearest: { pos: Vec2 } | null = null;
+    let minDist = Infinity;
+    for (const item of items) {
+      const dist = Math.hypot(item.pos.x - mePos.x, item.pos.y - mePos.y);
+      if (dist < range && dist < minDist) { minDist = dist; nearest = item; }
+    }
+    return nearest;
+  }
+
+  private findTeleportTarget(
+    me: ServerPlayer, target: ServerPlayer,
+    worldBounds: { minX: number; minY: number; maxX: number; maxY: number },
+    obstacles: Obstacle[],
+  ): Vec2 | null {
+    const dx = target.pos.x - me.pos.x;
+    const dy = target.pos.y - me.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) return null;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    for (let d = TELEPORT_RANGE * 0.6; d <= TELEPORT_RANGE; d += 20) {
+      const tx = me.pos.x + nx * d;
+      const ty = me.pos.y + ny * d;
+      if (tx < worldBounds.minX || tx > worldBounds.maxX || ty < worldBounds.minY || ty > worldBounds.maxY) continue;
+      let blocked = false;
+      for (const o of obstacles) {
+        if (tx > o.x - OBSTACLE_PLAYER_RADIUS && tx < o.x + o.w + OBSTACLE_PLAYER_RADIUS &&
+            ty > o.y - OBSTACLE_PLAYER_RADIUS && ty < o.y + o.h + OBSTACLE_PLAYER_RADIUS) {
+          blocked = true; break;
+        }
+      }
+      if (!blocked) return { x: tx, y: ty };
+    }
+    return null;
+  }
+
+  private findFleeTeleportTarget(
+    me: ServerPlayer, itPlayer: ServerPlayer,
+    worldBounds: { minX: number; minY: number; maxX: number; maxY: number },
+    obstacles: Obstacle[],
+  ): Vec2 | null {
+    const dx = me.pos.x - itPlayer.pos.x;
+    const dy = me.pos.y - itPlayer.pos.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) return null;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    for (let d = TELEPORT_RANGE * 0.5; d <= TELEPORT_RANGE; d += 20) {
+      const tx = me.pos.x + nx * d;
+      const ty = me.pos.y + ny * d;
+      if (tx < worldBounds.minX || tx > worldBounds.maxX || ty < worldBounds.minY || ty > worldBounds.maxY) continue;
+      let blocked = false;
+      for (const o of obstacles) {
+        if (tx > o.x - OBSTACLE_PLAYER_RADIUS && tx < o.x + o.w + OBSTACLE_PLAYER_RADIUS &&
+            ty > o.y - OBSTACLE_PLAYER_RADIUS && ty < o.y + o.h + OBSTACLE_PLAYER_RADIUS) {
+          blocked = true; break;
+        }
+      }
+      if (!blocked) return { x: tx, y: ty };
+    }
+    return null;
+  }
+}
 
 interface ServerPlayer {
   id: string;
@@ -62,6 +372,7 @@ function clamp(v: number, min: number, max: number): number {
 
 export class GameRoom {
   private players = new Map<string, ServerPlayer>();
+  private bots = new Map<string, Bot>();
   private _hostId = "";
   private _targetCount = MAX_PLAYERS;
   private _phase: "lobby" | "playing" | "finished" = "lobby";
@@ -71,11 +382,16 @@ export class GameRoom {
   get phase(): string { return this._phase; }
   get hostId(): string { return this._hostId; }
   get targetCount(): number { return this._targetCount; }
-  get playerCount(): number { return this.players.size; }
+  get playerCount(): number { return this.players.size + this.bots.size; }
+  get humanCount(): number { return this.players.size; }
+  get botCount(): number { return this.bots.size; }
   get mapIndex(): number { return this._mapIndex; }
   get teamMode(): boolean { return this._teamMode; }
 
   private itPlayerId = "";
+  get currentItId(): string { return this.itPlayerId; }
+  get currentObstacles(): Obstacle[] { return this.obstacles; }
+  get currentMovingObstacles(): MovingObstacle[] { return this.movingObstacles; }
   private winnerId = "";
   private winnerName = "";
   private tickCount = 0;
@@ -100,23 +416,26 @@ export class GameRoom {
   private worldMaxX = WORLD.width;
   private worldMaxY = WORLD.height;
 
-  get isFull(): boolean { return this.players.size >= MAX_PLAYERS; }
+  get isFull(): boolean { return this.players.size + this.bots.size >= MAX_PLAYERS; }
 
   get isLobbyReady(): boolean {
-    return this.players.size >= 2 && this.players.size >= this._targetCount;
+    const total = this.players.size + this.bots.size;
+    return total >= 2 && total >= this._targetCount;
   }
 
   get lobbyState(): GameState {
     const arr: { id: string; name: string; skinId: string }[] = [];
     for (const p of this.players.values()) arr.push({ id: p.id, name: p.name, skinId: p.skinId });
+    for (const b of this.bots.values()) arr.push({ id: b.id, name: b.name, skinId: b.skinId });
     return {
       phase: "lobby",
-      playerCount: this.players.size,
+      playerCount: this.players.size + this.bots.size,
       targetCount: this._targetCount,
       players: arr,
       hostId: this._hostId,
       mapIndex: this._mapIndex,
       teamMode: this._teamMode,
+      botCount: this.bots.size,
     };
   }
 
@@ -138,6 +457,27 @@ export class GameRoom {
     if (!p) return false;
     p.skinId = skinId.slice(0, 16) || "default";
     return true;
+  }
+
+  addBot(): boolean {
+    if (this._phase !== "lobby") return false;
+    if (this.players.size + this.bots.size >= MAX_PLAYERS) return false;
+    const index = this.bots.size;
+    const bot = new Bot(index);
+    this.bots.set(bot.id, bot);
+    return true;
+  }
+
+  removeBot(): boolean {
+    if (this._phase !== "lobby") return false;
+    if (this.bots.size === 0) return false;
+    const lastBot = this.bots.keys().next().value!;
+    this.bots.delete(lastBot);
+    return true;
+  }
+
+  removeBots(): void {
+    this.bots.clear();
   }
 
   addPlayer(id: string, name: string, skinId?: string): { hostId: string; isHost: boolean } {
@@ -169,6 +509,9 @@ export class GameRoom {
     if (this._hostId === id && this.players.size > 0) {
       this._hostId = this.players.keys().next().value!;
     }
+    if (this.players.size === 0) {
+      this.bots.clear();
+    }
     if (this._phase === "playing") this.checkWin();
   }
 
@@ -179,7 +522,8 @@ export class GameRoom {
   }
 
   startGame(): void {
-    if (this.players.size < 2) return;
+    const totalPlayers = this.players.size + this.bots.size;
+    if (totalPlayers < 2) return;
     this._phase = "playing";
     this.tickCount = 0;
     this.worldMinX = 0; this.worldMinY = 0;
@@ -194,9 +538,8 @@ export class GameRoom {
     this.obstacles = this.generateObstacles(this._mapIndex);
     this.movingObstacles = this.generateMovingObstacles(this._mapIndex);
 
-    const ids = [...this.players.keys()];
-    for (let i = 0; i < ids.length; i++) {
-      const p = this.players.get(ids[i])!;
+    let spawnIdx = 0;
+    for (const p of this.players.values()) {
       p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
       p.stamina = STAMINA_MAX; p.sprinting = false;
       p.invisibleTicks = 0; p.invisibleCooldown = 0;
@@ -205,17 +548,39 @@ export class GameRoom {
       p.trapCooldown = 0; p.teleportCooldown = 0;
       p.teleportUsed = false; p.dashUsed = false; p.emoteCooldown = 0;
       p.tags = 0; p.streak = 0;
-      const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
+      const spawn = SPAWN_POINTS[spawnIdx % SPAWN_POINTS.length];
       p.pos = { ...spawn };
+      spawnIdx++;
     }
 
+    for (const bot of this.bots.values()) {
+      const bp: ServerPlayer = {
+        id: bot.id, name: bot.name,
+        pos: { ...SPAWN_POINTS[spawnIdx % SPAWN_POINTS.length] },
+        lastDir: { x: 0, y: 0 }, lastSeq: 0,
+        eliminated: false, graceTicks: 0, itElapsed: 0,
+        stamina: STAMINA_MAX, sprinting: false,
+        invisibleTicks: 0, invisibleCooldown: 0,
+        shieldTimer: 0, frozenTicks: 0, speedBoostTicks: 0,
+        dashTicks: 0, dashCooldown: 0,
+        trapCooldown: 0, teleportCooldown: 0,
+        teleportUsed: false, dashUsed: false, emoteCooldown: 0,
+        tags: 0, streak: 0, bestStreak: 0,
+        skinId: bot.skinId,
+      };
+      this.players.set(bot.id, bp);
+      spawnIdx++;
+    }
+
+    const ids = [...this.players.keys()];
     this.itPlayerId = ids[Math.floor(Math.random() * ids.length)];
     const it = this.players.get(this.itPlayerId)!;
     it.graceTicks = GRACE_TICKS;
   }
 
   restartGame(): void {
-    if (this.players.size < 2) return;
+    const totalPlayers = this.players.size + this.bots.size;
+    if (totalPlayers < 2) return;
     this._phase = "playing";
     this.tickCount = 0;
     this.winnerId = ""; this.winnerName = "";
@@ -231,9 +596,8 @@ export class GameRoom {
     this.obstacles = this.generateObstacles(this._mapIndex);
     this.movingObstacles = this.generateMovingObstacles(this._mapIndex);
 
-    const ids = [...this.players.keys()];
-    for (let i = 0; i < ids.length; i++) {
-      const p = this.players.get(ids[i])!;
+    let spawnIdx = 0;
+    for (const p of this.players.values()) {
       p.eliminated = false; p.graceTicks = 0; p.itElapsed = 0;
       p.stamina = STAMINA_MAX; p.sprinting = false;
       p.invisibleTicks = 0; p.invisibleCooldown = 0;
@@ -242,10 +606,12 @@ export class GameRoom {
       p.trapCooldown = 0; p.teleportCooldown = 0;
       p.teleportUsed = false; p.dashUsed = false; p.emoteCooldown = 0;
       p.tags = 0; p.streak = 0;
-      const spawn = SPAWN_POINTS[i % SPAWN_POINTS.length];
+      const spawn = SPAWN_POINTS[spawnIdx % SPAWN_POINTS.length];
       p.pos = { ...spawn };
+      spawnIdx++;
     }
 
+    const ids = [...this.players.keys()];
     this.itPlayerId = ids[Math.floor(Math.random() * ids.length)];
     const it = this.players.get(this.itPlayerId)!;
     it.graceTicks = GRACE_TICKS;
@@ -314,6 +680,18 @@ export class GameRoom {
     const dt = 1 / TICK_RATE;
     this.tickCount++;
 
+    for (const bot of this.bots.values()) {
+      const bp = this.players.get(bot.id);
+      if (!bp || bp.eliminated) continue;
+      const msg = bot.think(
+        this, bp, [...this.players.values()],
+        this.shields, this.powerUps, this.traps,
+        this.dangerZones, this.gravityWells,
+        { minX: this.worldMinX, minY: this.worldMinY, maxX: this.worldMaxX, maxY: this.worldMaxY },
+      );
+      this.setInput(bot.id, this.tickCount, msg.dir, msg.sprint, msg.invisible, msg.dash, msg.placeTrap, msg.teleport, msg.emote);
+    }
+
     const it = this.players.get(this.itPlayerId);
     if (!it || it.eliminated) { this.pickNextIt(); return; }
 
@@ -334,11 +712,11 @@ export class GameRoom {
       if (p.trapCooldown > 0) p.trapCooldown--;
       if (p.teleportCooldown > 0) p.teleportCooldown--;
       if (p.emoteCooldown > 0) p.emoteCooldown--;
+      if (p.graceTicks > 0) p.graceTicks--;
       p.teleportUsed = false;
     }
 
     if (it.graceTicks > 0) {
-      it.graceTicks--;
     } else if (it.shieldTimer > 0) {
     } else {
       it.itElapsed += dt;
@@ -429,7 +807,7 @@ export class GameRoom {
 
     for (const p of this.players.values()) {
       if (p.eliminated || p.id === this.itPlayerId) continue;
-      if (p.shieldTimer > 0 || p.frozenTicks > 0) continue;
+      if (p.shieldTimer > 0 || p.frozenTicks > 0 || p.graceTicks > 0) continue;
       const dx = it.pos.x - p.pos.x;
       const dy = it.pos.y - p.pos.y;
       if (Math.hypot(dx, dy) < TAG_RANGE) {
